@@ -1,0 +1,98 @@
+
+- name: Update apt chache
+  apt:
+    update_cache: yes
+
+- name: Upgrade packages
+  apt:
+    update_cache: yes
+    upgrade: yes
+
+- name: Install packages
+  apt:
+    pkg:
+      - python3-pip
+      - python3-dev
+      - libpq-dev
+      - gcc
+      - jq
+      - curl
+      - git
+      - vim
+      - nload
+      - mariadb-server
+    state: present
+
+- name: Remove specific lines from mariadb.cnf
+  block:
+    - name: Remove specific lines from mariadb.cnf
+      ansible.builtin.replace:
+        path: /etc/mysql/mariadb.cnf
+        regexp: "{{ item.regexp }}"
+        replace: ""
+      loop:
+        - { regexp: "^\\s*\\[mariadb\\]\\s*$" }   # Remove [mariadb] section
+        - { regexp: "^\\s*bind-address\\s*=.*" }   # Remove bind-address line
+        - { regexp: "^\\s*server-id\\s*=.*" }      # Remove server-id line
+        - { regexp: "^\\s*log_bin\\s*=.*" }        # Remove log_bin line
+  ignore_errors: yes
+
+- name: Add configurations to mariadb.cnf
+  ansible.builtin.lineinfile:
+    path: /etc/mysql/mariadb.cnf
+    line: |
+       [mariadb]
+       bind-address = 0.0.0.0
+       server-id = {{ server_id }}
+       log_bin = mysql-bin
+    insertafter: EOF
+
+- name: Start and enable the keepalived service
+  ansible.builtin.service:
+    name: mariadb
+    state: restarted
+    enabled: yes
+
+- name:  CHANGE root PASS
+  ansible.builtin.shell:
+    cmd: sudo mysql -u root --skip-password -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ new_root_password }}';);"
+  ignore_errors: yes
+
+- name:  Remove replica user if exist
+  ansible.builtin.shell:
+    cmd: sudo mysql -u root -p{{ new_root_password }} -e "DELETE FROM mysql.user WHERE user = 'replica' AND host = '%' AND EXISTS (SELECT 1 FROM mysql.user WHERE user = 'replica' AND host = '%');"
+
+- name:  CREATE REPLICA USER IN MASTER
+  ansible.builtin.shell:
+    cmd: sudo mysql -u root -p{{ new_root_password }} -e "CREATE USER 'replica'@'%' IDENTIFIED BY '{{ replica_password }}'; GRANT REPLICATION SLAVE ON *.* TO 'replica'@'%'; FLUSH PRIVILEGES;"
+  run_once: true
+  when: inventory_hostname in ['db1']
+  ignore_errors: yes
+
+- name: Get master status
+   mysql_variables:
+     login_host: localhost
+     login_user: root
+     login_password: your_mysql_root_password
+     database: "information_schema"
+     query: "SHOW MASTER STATUS"
+   register: master_status
+   when: inventory_hostname in ['db1']
+
+
+ - name: Change master to match current master status
+   mysql_db:
+     login_host: localhost
+     login_user: root
+     login_password: {{ new_root_password }}
+     database: "information_schema" # Change this to your database name
+     when: inventory_hostname in ['db2', 'db3']
+     state: query
+     query: |
+       CHANGE MASTER TO
+       MASTER_HOST='IP_OF_MASTER',
+       MASTER_USER='replica',
+       MASTER_PASSWORD='replicapass',
+       MASTER_LOG_FILE='{{ master_status.query_result[0].File }}',
+       MASTER_LOG_POS={{ master_status.query_result[0].Position }};
+

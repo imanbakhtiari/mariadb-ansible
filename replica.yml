@@ -1,0 +1,14 @@
+- hosts: db
+  roles:
+    - role: mariadb
+  gather_facts: yes
+  any_errors_fatal: true
+  tags: [mariadb]
+
+- hosts: ha
+  roles:
+    - role: haproxy
+  gather_facts: yes
+  any_errors_fatal: true
+  tags: [haproxy]
+
