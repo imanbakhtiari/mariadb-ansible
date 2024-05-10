@@ -1,0 +1,9 @@
+---
+# tasks file for mariadb
+
+- name: configure mariadb
+  include_tasks: mariadb.yml
+
+    #- name: Install and config haproxy and keepalived
+    #  include_tasks: ha.yml
+
